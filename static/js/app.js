@@ -12,6 +12,8 @@ let outputCanvas = null;
 let outputCtx = null;
 let personOverlayCanvas = null; // 인물 오버레이 캔버스
 let personOverlayCtx = null;
+let cameraCanvas = null;        // 카메라 캡처용 캔버스 (재사용)
+let cameraCtx = null;           // 카메라 캡처용 컨텍스트
 let personSegmenter = null;
 let isProcessing = false;
 let processingInterval = null;
@@ -123,6 +125,10 @@ async function initializeApp() {
     // 인물 분리 모듈 초기화
     personSegmenter = new PersonSegmenter();
     await personSegmenter.initialize();
+    
+    // 카메라 캡처용 캔버스 초기화
+    cameraCanvas = document.createElement('canvas');
+    cameraCtx = cameraCanvas.getContext('2d');
     
     // 이벤트 리스너 설정
     setupEventListeners();
@@ -534,11 +540,9 @@ async function processOverlay() {
             console.log(`오버레이 캔버스 크기 조정: ${containerWidth}x${containerHeight}`);
         }
         
-        // 카메라 프레임 캡처
-        const cameraCanvas = document.createElement('canvas');
+        // 카메라 캡처용 캔버스 크기 설정
         cameraCanvas.width = cameraVideo.videoWidth || 640;
         cameraCanvas.height = cameraVideo.videoHeight || 360;
-        const cameraCtx = cameraCanvas.getContext('2d');
         
         // 카메라가 미러링되어 있으므로 캔버스에서도 미러링 처리
         cameraCtx.save();
