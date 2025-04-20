@@ -104,6 +104,10 @@ class PersonSegmenter {
             }
 
             try {
+                // WASM 바인딩 문제 해결을 위한 전역 설정
+                window.Module = window.Module || {};
+                window.Module.arguments = window.Module.arguments || [];
+                
                 // SelfieSegmentation 스크립트 동적 로드
                 const script = document.createElement('script');
                 script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js';
