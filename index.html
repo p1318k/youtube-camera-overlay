@@ -72,6 +72,8 @@
                     <p>* YouTube 영상의 전체 URL이나 비디오 ID를 입력하세요.</p>
                     <p>* 예: https://www.youtube.com/watch?v=9bZkp7q19f0 또는 9bZkp7q19f0</p>
                 </div>
+                <!-- 추가된 검색 결과 컨테이너 -->
+                <div id="search-results" class="search-results-container"></div>
             </div>
 
             <div class="preview-section">
@@ -119,9 +121,6 @@
 
     <!-- YouTube API 로드 -->
     <script src="https://www.youtube.com/iframe_api"></script>
-    
-    <!-- MediaPipe Tasks Vision 라이브러리 로드 - 로컬 파일 사용 -->
-    <script src="./static/libs/mediapipe/vision_bundle_iife.min.js"></script>
     
     <!-- 아래에 새로운 클라이언트 사이드 JavaScript 파일을 추가합니다 -->
     <script src="./static/js/person-segmenter.js"></script>
