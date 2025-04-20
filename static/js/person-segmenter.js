@@ -391,61 +391,86 @@ class PersonSegmenter {
                 } catch(e) {}
             }
             
-            // 메모리 오류 감지를 위한 타임아웃 설정
-            let timeoutId;
-            const processingPromise = new Promise(async (resolve, reject) => {
-                // 처리 타임아웃 설정 (5초)
-                timeoutId = setTimeout(() => {
-                    reject(new Error("MediaPipe 처리 시간 초과 (메모리 오류 의심)"));
-                }, 5000);
-                
-                try {
-                    // 시간 측정 시작
-                    const startTime = performance.now();
-                    
-                    // selfie_segmentation은 이미지를 직접 입력으로 받음
-                    await this.selfieSegmentation.send({ image: processedFrame });
-                    
-                    // 타임아웃 해제
-                    clearTimeout(timeoutId);
-                    
-                    // 시간 측정 종료
-                    const processingTime = performance.now() - startTime;
-                    console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
-                    
-                    // 결과가 없으면 오류
-                    if (!this.lastResults || !this.lastResults.segmentationMask) {
-                        throw new Error("유효한 분할 결과를 받지 못했습니다.");
-                    }
-                    
-                    // 타임스탬프 오류 감지
-                    const currentFrameTime = performance.now();
-                    if (this.lastFrameTime && currentFrameTime - this.lastFrameTime < 10) {
-                        this.timestampErrorCount++;
-                        console.warn(`타임스탬프 오류 감지 (${this.timestampErrorCount}/${this.maxTimestampErrors})`);
-                        if (this.timestampErrorCount >= this.maxTimestampErrors) {
-                            console.error("타임스탬프 오류가 임계값을 초과했습니다. 초기화가 필요합니다.");
-                            this.resetRequired = true;
-                            throw new Error("타임스탬프 오류로 인해 초기화 필요");
-                        }
-                    } else {
-                        this.timestampErrorCount = 0; // 오류 카운터 리셋
-                    }
-                    this.lastFrameTime = currentFrameTime;
-                    
-                    // 오류 카운터 리셋 (성공)
-                    this.errorCount = 0;
-                    resolve();
-                } catch (mpError) {
-                    // 타임아웃 해제
-                    clearTimeout(timeoutId);
-                    reject(mpError);
-                }
-            });
+            // 시간 측정 시작
+            const startTime = performance.now();
+            
+            // 타임아웃 설정
+            let timeoutId = setTimeout(() => {
+                console.error("MediaPipe 처리 시간 초과 (메모리 오류 의심)");
+                throw new Error("MediaPipe 처리 시간 초과 (메모리 오류 의심)");
+            }, 5000);
             
             try {
-                await processingPromise;
+                // selfie_segmentation은 이미지를 직접 입력으로 받음
+                await this.selfieSegmentation.send({ image: processedFrame });
+                
+                // 타임아웃 해제
+                clearTimeout(timeoutId);
+                
+                // 시간 측정 종료
+                const processingTime = performance.now() - startTime;
+                console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
+                
+                // 결과가 없으면 오류
+                if (!this.lastResults || !this.lastResults.segmentationMask) {
+                    throw new Error("유효한 분할 결과를 받지 못했습니다.");
+                }
+                
+                // 타임스탬프 오류 감지
+                const currentFrameTime = performance.now();
+                if (this.lastFrameTime && currentFrameTime - this.lastFrameTime < 10) {
+                    this.timestampErrorCount++;
+                    console.warn(`타임스탬프 오류 감지 (${this.timestampErrorCount}/${this.maxTimestampErrors})`);
+                    if (this.timestampErrorCount >= this.maxTimestampErrors) {
+                        console.error("타임스탬프 오류가 임계값을 초과했습니다. 초기화가 필요합니다.");
+                        this.resetRequired = true;
+                        throw new Error("타임스탬프 오류로 인해 초기화 필요");
+                    }
+                } else {
+                    this.timestampErrorCount = 0; // 오류 카운터 리셋
+                }
+                this.lastFrameTime = currentFrameTime;
+                
+                // 오류 카운터 리셋 (성공)
+                this.errorCount = 0;
+                
+                // 여기서부터는 정상 처리된 경우만 실행됨
+                // 결과 처리를 위한 캔버스 준비
+                const personCanvas = document.createElement('canvas');
+                personCanvas.width = originalWidth;
+                personCanvas.height = originalHeight;
+                const personCtx = personCanvas.getContext('2d');
+                
+                // 마스크 캔버스 준비
+                const maskCanvas = document.createElement('canvas');
+                maskCanvas.width = originalWidth;
+                maskCanvas.height = originalHeight;
+                const maskCtx = maskCanvas.getContext('2d');
+                
+                // 세그멘테이션 마스크 그리기 (원본 이미지 크기에 맞게 조정)
+                maskCtx.drawImage(this.lastResults.segmentationMask, 0, 0, originalWidth, originalHeight);
+                
+                // 원본 이미지 그리기
+                personCtx.drawImage(frame, 0, 0, originalWidth, originalHeight);
+                
+                // 마스크를 사용하여 인물만 추출 (배경 제거)
+                personCtx.globalCompositeOperation = 'destination-in';
+                personCtx.drawImage(maskCanvas, 0, 0, originalWidth, originalHeight);
+                personCtx.globalCompositeOperation = 'source-over';
+                
+                // 에지 블러 효과 적용
+                const blurredCanvas = this._applyMaskBlur(personCanvas);
+                
+                // 결과 반환
+                return {
+                    maskCanvas: maskCanvas,
+                    originalCanvas: frame,
+                    personCanvas: blurredCanvas
+                };
             } catch (mpError) {
+                // 타임아웃 해제
+                clearTimeout(timeoutId);
+                
                 // 메모리 오류 또는 다른 MediaPipe 내부 오류 발생
                 console.error("MediaPipe 내부 처리 오류:", mpError);
                 
@@ -474,40 +499,6 @@ class PersonSegmenter {
                 
                 return this._segmentPersonByColor(frame);
             }
-            
-            // 여기서부터는 정상 처리된 경우만 실행됨
-            // 결과 처리를 위한 캔버스 준비
-            const personCanvas = document.createElement('canvas');
-            personCanvas.width = originalWidth;
-            personCanvas.height = originalHeight;
-            const personCtx = personCanvas.getContext('2d');
-            
-            // 마스크 캔버스 준비
-            const maskCanvas = document.createElement('canvas');
-            maskCanvas.width = originalWidth;
-            maskCanvas.height = originalHeight;
-            const maskCtx = maskCanvas.getContext('2d');
-            
-            // 세그멘테이션 마스크 그리기 (원본 이미지 크기에 맞게 조정)
-            maskCtx.drawImage(this.lastResults.segmentationMask, 0, 0, originalWidth, originalHeight);
-            
-            // 원본 이미지 그리기
-            personCtx.drawImage(frame, 0, 0, originalWidth, originalHeight);
-            
-            // 마스크를 사용하여 인물만 추출 (배경 제거)
-            personCtx.globalCompositeOperation = 'destination-in';
-            personCtx.drawImage(maskCanvas, 0, 0, originalWidth, originalHeight);
-            personCtx.globalCompositeOperation = 'source-over';
-            
-            // 에지 블러 효과 적용
-            const blurredCanvas = this._applyMaskBlur(personCanvas);
-            
-            // 결과 반환
-            return {
-                maskCanvas: maskCanvas,
-                originalCanvas: frame,
-                personCanvas: blurredCanvas
-            };
         } catch (error) {
             console.error("MediaPipe Selfie Segmentation 처리 중 오류:", error);
             
