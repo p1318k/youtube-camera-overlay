@@ -69,8 +69,8 @@ class PersonSegmenter {
                 });
                 
                 // 결과 콜백 설정 - 바로 처리하지 않고 결과만 저장
-                this.selfieSegmentation.onResults((results) => {
-                    this.lastSegmentationMask = results.segmentationMask ? results.segmentationMask.cloneNode(true) : null; // segmentationMask를 하드 카피하여 저장
+                this.selfieSegmentation.onResults((results) => async () => {
+                    this.lastSegmentationMask = results.segmentationMask ? await createImageBitmap(results.segmentationMask) : null; // segmentationMask를 하드 카피하여 저장
                 });
                 
                 // // 모델 옵션 설정
