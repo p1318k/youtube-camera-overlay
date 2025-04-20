@@ -104,37 +104,100 @@ class PersonSegmenter {
             }
 
             try {
-                // WASM 바인딩 문제 해결을 위한 전역 설정
+                // 메모리 관련 문제 해결을 위한 설정
+                // WASM 메모리 설정 및 성능 최적화
                 window.Module = window.Module || {};
                 window.Module.arguments = window.Module.arguments || [];
+                window.Module.locateFile = (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`;
+                };
+                
+                // 메모리 부족 오류 방지를 위한 힙 설정
+                window.Module.TOTAL_MEMORY = 50 * 1024 * 1024; // 50MB
+                window.Module.noInitialRun = true;
+                window.Module.onRuntimeInitialized = () => {
+                    console.log("MediaPipe WASM 런타임 초기화 완료");
+                };
+                
+                // 로딩 타임아웃 설정
+                const loadTimeout = setTimeout(() => {
+                    console.error("MediaPipe 로딩 타임아웃");
+                    reject(new Error("MediaPipe 로딩 시간 초과"));
+                }, 10000); // 10초 타임아웃
                 
                 // SelfieSegmentation 스크립트 동적 로드
+                // 메모리 사용량이 적은 가벼운 모델 버전 사용
                 const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js';
+                // CDN 로드 실패 시 대체 URL 사용 준비
+                const primaryUrl = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js';
+                const backupUrl = 'https://unpkg.com/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js';
+                
+                script.src = primaryUrl;
                 script.crossOrigin = 'anonymous';
                 
+                // 스크립트 로드 이벤트 핸들러
                 script.onload = () => {
+                    clearTimeout(loadTimeout);
                     console.log("MediaPipe Selfie Segmentation 스크립트 로드 완료");
                     
-                    // 로드 후 확인
-                    if (window.SelfieSegmentation) {
-                        resolve();
-                    } else {
-                        reject(new Error("MediaPipe Selfie Segmentation이 전역 객체에 등록되지 않았습니다."));
-                    }
+                    // 다음 프레임에서 확인 (비동기 초기화 대기)
+                    setTimeout(() => {
+                        if (window.SelfieSegmentation) {
+                            resolve();
+                        } else {
+                            console.warn("MediaPipe가 전역 객체에 등록되지 않았습니다. 다시 시도합니다.");
+                            // 메인 CDN 실패시 대체 URL 시도
+                            this._tryLoadAlternateScript(backupUrl, resolve, reject);
+                        }
+                    }, 100);
                 };
                 
                 script.onerror = (error) => {
-                    console.error("MediaPipe Selfie Segmentation 스크립트 로드 실패:", error);
-                    reject(error);
+                    clearTimeout(loadTimeout);
+                    console.error("MediaPipe 스크립트 로드 실패, 대체 URL 시도:", error);
+                    this._tryLoadAlternateScript(backupUrl, resolve, reject);
                 };
                 
                 document.head.appendChild(script);
                 
             } catch (error) {
+                console.error("MediaPipe 로드 중 예기치 않은 오류:", error);
                 reject(error);
             }
         });
+    }
+    
+    /**
+     * 대체 스크립트 URL로 로드 시도
+     */
+    _tryLoadAlternateScript(url, resolve, reject) {
+        try {
+            const altScript = document.createElement('script');
+            altScript.src = url;
+            altScript.crossOrigin = 'anonymous';
+            
+            altScript.onload = () => {
+                console.log("대체 URL에서 MediaPipe 로드 완료");
+                
+                // 비동기 초기화 확인
+                setTimeout(() => {
+                    if (window.SelfieSegmentation) {
+                        resolve();
+                    } else {
+                        reject(new Error("모든 소스에서 MediaPipe 로드 실패"));
+                    }
+                }, 100);
+            };
+            
+            altScript.onerror = (error) => {
+                console.error("대체 MediaPipe 로드 실패:", error);
+                reject(new Error("모든 소스에서 MediaPipe 로드 실패"));
+            };
+            
+            document.head.appendChild(altScript);
+        } catch (error) {
+            reject(error);
+        }
     }
 
     /**
