@@ -61,7 +61,7 @@ class PersonSegmenter {
             if (window.SelfieSegmentation) {
                 this.selfieSegmentation = new window.SelfieSegmentation({
                     locateFile: (file) => {
-                        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`;
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
                     }
                 });
                 
@@ -119,7 +119,7 @@ class PersonSegmenter {
                 
                 // 주의: Module.arguments 대신 arguments_ 사용 (WASM 모듈 호환성)
                 window.Module.locateFile = (file) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`;
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
                 };
 
                 // 로딩 타임아웃 설정
@@ -132,8 +132,8 @@ class PersonSegmenter {
                 // 메모리 사용량이 적은 가벼운 모델 버전 사용
                 const script = document.createElement('script');
                 // CDN 로드 실패 시 대체 URL 사용 준비
-                const primaryUrl = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js';
-                const backupUrl = 'https://unpkg.com/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js';
+                const primaryUrl = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
+                const backupUrl = 'https://unpkg.com/@mediapipe/selfie_segmentation/selfie_segmentation.js';
                 
                 script.src = primaryUrl;
                 script.crossOrigin = 'anonymous';
