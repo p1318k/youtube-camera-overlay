@@ -13,7 +13,7 @@ class PersonSegmenter {
             maskBlur: 5,         // 마스크 블러 강도
             edgeBlur: 10,        // 에지 블러 강도
             flipHorizontal: true, // 수평 뒤집기 (셀카 모드)
-            maxImageSize: 640    // 최대 이미지 크기 (메모리 오류 방지)
+            maxImageSize: 1280    // 최대 이미지 크기 (메모리 오류 방지)
         };
         
         // 초기화 상태 변수
@@ -360,37 +360,6 @@ class PersonSegmenter {
         }
         
         try {
-            // 이미지가 너무 크면 리사이징 (메모리 오류 방지)
-            let processedFrame = frame;
-            // 최대 이미지 크기를 더 작게 설정 (메모리 문제 해결)
-            const maxSize = Math.min(this.segmentationConfig.maxImageSize, 480);
-            
-            // 메모리 오류를 방지하기 위해 이미지 항상 리사이징
-            if (originalWidth > maxSize || originalHeight > maxSize) {
-                // 새로운 크기 계산 (종횡비 유지)
-                const scale = Math.min(maxSize / originalWidth, maxSize / originalHeight);
-                const newWidth = Math.floor(originalWidth * scale);
-                const newHeight = Math.floor(originalHeight * scale);
-                
-                // 임시 캔버스에 리사이징
-                const resizedCanvas = document.createElement('canvas');
-                resizedCanvas.width = newWidth;
-                resizedCanvas.height = newHeight;
-                const resizedCtx = resizedCanvas.getContext('2d', { willReadFrequently: true });
-                resizedCtx.drawImage(frame, 0, 0, newWidth, newHeight);
-                
-                processedFrame = resizedCanvas;
-                console.log(`이미지 리사이징 완료: ${newWidth}x${newHeight} (메모리 최적화)`);
-            }
-            
-            // 메모리 최적화: 가비지 컬렉션 실행 요청 (선택적)
-            if (window.gc) {
-                try { 
-                    window.gc(); 
-                    console.log("가비지 컬렉션 요청됨"); 
-                } catch(e) {}
-            }
-            
             // 시간 측정 시작
             const startTime = performance.now();
             
@@ -402,7 +371,7 @@ class PersonSegmenter {
             
             try {
                 // selfie_segmentation은 이미지를 직접 입력으로 받음
-                await this.selfieSegmentation.send({ image: processedFrame });
+                await this.selfieSegmentation.send({ image: frame });
                 
                 // 타임아웃 해제
                 clearTimeout(timeoutId);
