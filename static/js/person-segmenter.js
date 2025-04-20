@@ -109,6 +109,9 @@ class PersonSegmenter {
                 return;
             }
 
+            // Reset any reset flag that might be set
+            this.resetRequired = false;
+            
             try {
                 // 메모리 관련 문제 해결을 위한 설정
                 // WASM 메모리 설정 및 성능 최적화
