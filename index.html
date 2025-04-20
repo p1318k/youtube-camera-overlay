@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube 카메라 오버레이</title>
+    <link rel="stylesheet" href="./static/styles.css">
+    <style>
+        /* 추가적인 인라인 스타일 */
+        .hidden {
+            display: none;
+        }
+        #output-canvas {
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            object-fit: contain;
+        }
+        .loading-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 8px 16px;
+            border-radius: 4px;
+        }
+        /* 새로운 레이아웃을 위한 스타일 */
+        .overlay-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #youtube-player {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        #person-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none; /* 마우스 이벤트가 YouTube 플레이어로 전달되도록 */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>YouTube 카메라 오버레이</h1>
+            <p>유튜브 영상에 카메라 영상을 실시간으로 합성하세요</p>
+        </header>
+
+        <div class="main-content">
+            <div class="search-section">
+                <h2>YouTube 영상 URL 입력</h2>
+                <div class="url-form">
+                    <input type="text" id="url-input" placeholder="YouTube 영상 URL을 입력하세요 (예: https://www.youtube.com/watch?v=9bZkp7q19f0)">
+                    <button id="load-video-button">영상 불러오기</button>
+                </div>
+                <div class="input-help">
+                    <p>* YouTube 영상의 전체 URL이나 비디오 ID를 입력하세요.</p>
+                    <p>* 예: https://www.youtube.com/watch?v=9bZkp7q19f0 또는 9bZkp7q19f0</p>
+                </div>
+            </div>
+
+            <div class="preview-section">
+                <h2>영상 미리보기</h2>
+                <div class="video-container">
+                    <div id="youtube-container">
+                        <!-- YouTube 플레이어가 여기에 로드됩니다 -->
+                        <div id="youtube-player"></div>
+                    </div>
+                    <div id="camera-container">
+                        <!-- 카메라 비디오 요소 -->
+                        <video id="camera-video" autoplay playsinline muted></video>
+                        <p id="camera-status" class="status-message hidden">카메라 권한을 허용해주세요</p>
+                    </div>
+                    <div id="output-container">
+                        <!-- 새로운 합성 방식: YouTube 위에 투명한 인물 오버레이 -->
+                        <div class="overlay-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden;">
+                            <!-- YouTube 플레이어가 배경으로 표시됩니다 -->
+                            <div id="output-youtube-player" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;"></div>
+                            <!-- 인물만 분리된 오버레이 캔버스 -->
+                            <canvas id="person-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;"></canvas>
+                        </div>
+                        <!-- 기존 출력 캔버스는 숨김 처리 -->
+                        <canvas id="output-canvas" class="hidden"></canvas>
+                        <!-- 상태 메시지 -->
+                        <p id="output-status" class="status-message">처리가 시작되지 않았습니다</p>
+                    </div>
+                </div>
+                <div class="control-panel">
+                    <button id="start-button" class="primary-button">시작</button>
+                    <button id="stop-button" class="danger-button" disabled>중지</button>
+                    <button id="screenshot-button" class="action-button">스크린샷</button>
+                    <div class="settings">
+                        <label for="opacity-slider">투명도:</label>
+                        <input type="range" id="opacity-slider" min="0" max="100" value="100">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>&copy; 2025 YouTube 카메라 오버레이. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <!-- YouTube API 로드 -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+    
+    <!-- MediaPipe Tasks Vision 라이브러리 로드 - 로컬 파일 사용 -->
+    <script src="./static/libs/mediapipe/vision_bundle_iife.min.js"></script>
+    
+    <!-- 아래에 새로운 클라이언트 사이드 JavaScript 파일을 추가합니다 -->
+    <script src="./static/js/person-segmenter.js"></script>
+    <script src="./static/js/app.js"></script>
+    <!-- 디버그 스크립트 -->
+    <script src="./static/js/debug.js"></script>
+</body>
+</html>

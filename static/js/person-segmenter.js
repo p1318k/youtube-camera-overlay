@@ -1,0 +1,683 @@
+/**
+ * PersonSegmenter 클래스 - 카메라 영상에서 사람을 분리하는 기능 담당
+ * MediaPipe Tasks Vision의 ImageSegmenter를 사용하여 구현
+ * 참고: https://codepen.io/mediapipe-preview/pen/xxJNjbN
+ */
+class PersonSegmenter {
+    constructor() {
+        this.initialized = false;
+        this.imageSegmenter = null;
+        this.segmentationConfig = {
+            threshold: 0.5,      // 분할 임계값
+            maskOpacity: 1.0,    // 마스크 불투명도
+            maskBlur: 5,         // 마스크 블러 강도
+            edgeBlur: 10,        // 에지 블러 강도
+            flipHorizontal: true // 수평 뒤집기 (셀카 모드)
+        };
+        this.visionTasksReady = false;
+        
+        // 로컬 파일 경로 설정 (다양한 상대 경로 시나리오 처리)
+        this.baseModelPath = location.pathname.includes('/templates/') ? '../static/libs/mediapipe' : './static/libs/mediapipe';
+        this.modelAssetPath = `${this.baseModelPath}/selfie_segmenter.tflite`;
+        
+        this.maxRetries = 3;     // 초기화 최대 재시도 횟수
+        this.retryCount = 0;     // 현재 재시도 횟수
+        this.useMediaPipe = true; // MediaPipe 사용 여부 플래그
+        this.dynamicImportFailed = false; // ES 모듈 동적 가져오기 실패 여부
+        
+        // 디버그 로깅 추가
+        console.log("PersonSegmenter 생성됨. 모델 경로:", this.modelAssetPath);
+    }
+
+    /**
+     * 모델 초기화
+     * MediaPipe Tasks Vision의 ImageSegmenter 모델 로드 및 초기화
+     */
+    async initialize() {
+        try {
+            // 모델이 이미 초기화되었는지 확인
+            if (this.initialized) {
+                return true;
+            }
+
+            console.log("PersonSegmenter 초기화 시작...");
+            
+            // MediaPipe 사용이 명시적으로 비활성화된 경우 폴백 메서드로 바로 전환
+            if (!this.useMediaPipe) {
+                console.warn("MediaPipe 사용이 비활성화되어 있습니다. 대체 메서드를 사용합니다.");
+                return this.initFallbackMethod();
+            }
+            
+            // 먼저 기존 방식으로 MediaPipe 모듈 확인
+            this._ensureMediaPipeModules();
+            
+            // 기존 방식으로 로딩이 안 되면 동적 로딩 시도
+            if (!this._getFilesetResolver() || !this._getImageSegmenter()) {
+                try {
+                    await this._loadMediaPipeDynamically();
+                } catch (importError) {
+                    console.error("MediaPipe 동적 로드 실패:", importError);
+                    this.dynamicImportFailed = true;
+                }
+            }
+            
+            // FilesetResolver와 ImageSegmenter 모듈이 있는지 다시 확인
+            const FilesetResolver = this._getFilesetResolver();
+            const ImageSegmenter = this._getImageSegmenter();
+            
+            if (!FilesetResolver || !ImageSegmenter) {
+                console.error("필수 MediaPipe 모듈을 찾을 수 없습니다 (FilesetResolver, ImageSegmenter)");
+                
+                if (this.retryCount < this.maxRetries) {
+                    this.retryCount++;
+                    console.log(`${this.retryCount}번째 재시도 중... (최대 ${this.maxRetries}회)`);
+                    
+                    // 재시도 전 라이브러리를 다시 로드하도록 스크립트 추가
+                    if (this.dynamicImportFailed) {
+                        this._injectIIFEScript();
+                    }
+                    
+                    // 3초 후 재시도
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    return this.initialize();
+                } else {
+                    console.warn("최대 재시도 횟수 초과. 대체 메서드로 전환합니다.");
+                    this.useMediaPipe = false;
+                    return this.initFallbackMethod();
+                }
+            }
+            
+            console.log("MediaPipe 모듈 사용 가능. Vision Tasks 초기화 중...");
+            
+            try {
+                // MediaPipe vision module 초기화
+                const visionPaths = [
+                    "./static/libs/mediapipe",
+                    "../static/libs/mediapipe"
+                ];
+                
+                let vision = null;
+                let lastError = null;
+                
+                // 여러 경로를 순차적으로 시도
+                for (const path of visionPaths) {
+                    try {
+                        console.log(`Vision Tasks 로드 시도: ${path}`);
+                        vision = await FilesetResolver.forVisionTasks(path);
+                        if (vision) {
+                            console.log(`Vision Tasks 로드 성공: ${path}`);
+                            break;
+                        }
+                    } catch (error) {
+                        console.warn(`경로 ${path}에서 Vision Tasks 로드 실패:`, error);
+                        lastError = error;
+                    }
+                }
+                
+                if (!vision) {
+                    throw new Error("모든 경로에서 Vision Tasks 모듈 로드에 실패했습니다: " + lastError);
+                }
+                
+                console.log("Vision Tasks 초기화 완료. ImageSegmenter 생성 중...");
+                
+                // ImageSegmenter 초기화 시도
+                try {
+                    this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: this.modelAssetPath,
+                            delegate: "GPU"  // GPU 가속 시도
+                        },
+                        runningMode: "IMAGE",
+                        outputCategoryMask: true
+                    });
+                } catch (gpuError) {
+                    console.warn("GPU 가속 모드 실패:", gpuError);
+                    console.log("CPU 모드로 다시 시도합니다...");
+                    
+                    // GPU 실패 시 CPU로 다시 시도
+                    this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: this.modelAssetPath,
+                            delegate: "CPU"  // CPU 모드로 시도
+                        },
+                        runningMode: "IMAGE",
+                        outputCategoryMask: true
+                    });
+                }
+                
+                if (!this.imageSegmenter) {
+                    throw new Error("ImageSegmenter 인스턴스 생성에 실패했습니다");
+                }
+                
+                console.log("MediaPipe ImageSegmenter 초기화 완료!");
+                this.initialized = true;
+                this.useMediaPipe = true;
+                return true;
+                
+            } catch (initError) {
+                console.error("MediaPipe ImageSegmenter 초기화 중 오류:", initError);
+                
+                // 재시도 로직
+                if (this.retryCount < this.maxRetries) {
+                    this.retryCount++;
+                    console.log(`초기화 실패. ${this.retryCount}번째 재시도... (최대 ${this.maxRetries}회)`);
+                    
+                    // 지수 백오프로 재시도 (1초, 2초, 4초...)
+                    const backoffTime = Math.pow(2, this.retryCount) * 1000;
+                    await new Promise(resolve => setTimeout(resolve, backoffTime));
+                    
+                    return this.initialize();
+                } else {
+                    console.warn("최대 재시도 횟수 초과. 폴백 메서드를 활성화합니다.");
+                    this.useMediaPipe = false;
+                    return this.initFallbackMethod();
+                }
+            }
+            
+        } catch (error) {
+            console.error("모델 초기화 과정 중 예상치 못한 오류 발생:", error);
+            return this.initFallbackMethod();
+        }
+    }
+    
+    /**
+     * MediaPipe 모듈 동적 로딩 시도 
+     */
+    async _loadMediaPipeDynamically() {
+        console.log("MediaPipe 모듈을 동적으로 로드하는 시도...");
+        
+        try {
+            // 동적으로 IIFE 스크립트 삽입
+            return await this._injectIIFEScript();
+        } catch (error) {
+            console.error("MediaPipe 동적 로드 실패:", error);
+            throw error;
+        }
+    }
+    
+    /**
+     * IIFE 형식의 스크립트를 동적으로 삽입
+     */
+    _injectIIFEScript() {
+        return new Promise((resolve, reject) => {
+            // 이미 로드된 스크립트는 중복 로드하지 않음
+            if (document.querySelector('script[data-mediapipe-dynamic="true"]')) {
+                resolve();
+                return;
+            }
+            
+            const script = document.createElement('script');
+            script.src = "./static/libs/mediapipe/vision_bundle_iife.min.js";
+            script.dataset.mediapipeDynamic = "true";
+            
+            script.onload = () => {
+                console.log("MediaPipe IIFE 스크립트 동적 로드 완료");
+                // 전역 객체에 노출
+                if (window.mediapipe && window.mediapipe.tasks) {
+                    if (window.mediapipe.tasks.vision && window.mediapipe.tasks.vision.ImageSegmenter) {
+                        window.ImageSegmenter = window.mediapipe.tasks.vision.ImageSegmenter;
+                    }
+                    
+                    if (window.mediapipe.tasks.core && window.mediapipe.tasks.core.FilesetResolver) {
+                        window.FilesetResolver = window.mediapipe.tasks.core.FilesetResolver;
+                    }
+                }
+                
+                resolve();
+            };
+            
+            script.onerror = (error) => {
+                console.error("MediaPipe IIFE 스크립트 로드 실패:", error);
+                reject(error);
+            };
+            
+            document.head.appendChild(script);
+        });
+    }
+    
+    /**
+     * MediaPipe 모듈 사용 가능성 확인 및 필요시 폴백 설정
+     */
+    _ensureMediaPipeModules() {
+        if (window.FilesetResolver && window.ImageSegmenter) {
+            console.log("MediaPipe 모듈이 전역 변수로 발견되었습니다");
+            return;
+        }
+        
+        // mediapipe 네임스페이스로부터 모듈 노출 시도
+        if (window.mediapipe && window.mediapipe.tasks) {
+            console.log("mediapipe 네임스페이스에서 모듈을 찾았습니다. 전역으로 노출합니다...");
+            
+            if (window.mediapipe.tasks.core && window.mediapipe.tasks.core.FilesetResolver) {
+                window.FilesetResolver = window.mediapipe.tasks.core.FilesetResolver;
+            }
+            
+            if (window.mediapipe.tasks.vision && window.mediapipe.tasks.vision.ImageSegmenter) {
+                window.ImageSegmenter = window.mediapipe.tasks.vision.ImageSegmenter;
+            }
+        }
+    }
+
+    /**
+     * FilesetResolver 객체 가져오기
+     */
+    _getFilesetResolver() {
+        if (window.FilesetResolver) {
+            return window.FilesetResolver;
+        }
+        
+        if (window.mediapipe && window.mediapipe.tasks && window.mediapipe.tasks.core) {
+            return window.mediapipe.tasks.core.FilesetResolver;
+        }
+        
+        return null;
+    }
+    
+    /**
+     * ImageSegmenter 객체 가져오기
+     */
+    _getImageSegmenter() {
+        if (window.ImageSegmenter) {
+            return window.ImageSegmenter;
+        }
+        
+        if (window.mediapipe && window.mediapipe.tasks && window.mediapipe.tasks.vision) {
+            return window.mediapipe.tasks.vision.ImageSegmenter;
+        }
+        
+        return null;
+    }
+
+    /**
+     * 폴백 메서드 초기화 (ImageSegmenter 로드 실패 시)
+     */
+    initFallbackMethod() {
+        console.warn("색상 기반 인물 분리 메서드로 전환합니다 (MediaPipe 사용 불가)");
+        this.initialized = true;
+        this.useMediaPipe = false;
+        return true;
+    }
+
+    /**
+     * 영상 프레임에서 사람 마스크 생성
+     */
+    async segmentPerson(frame) {
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            // ImageSegmenter가 초기화되었으면 사용
+            if (this.imageSegmenter) {
+                return await this._segmentPersonWithImageSegmenter(frame);
+            }
+            // 그렇지 않으면 색상 기반 폴백 메서드 사용
+            return this._segmentPersonByColor(frame);
+        } catch (error) {
+            console.error("인물 분리 중 오류 발생:", error);
+            // 오류 발생 시 색상 기반 분리로 폴백
+            return this._segmentPersonByColor(frame);
+        }
+    }
+
+    /**
+     * MediaPipe ImageSegmenter를 사용한 인물 분리
+     */
+    async _segmentPersonWithImageSegmenter(frame) {
+        console.log("MediaPipe ImageSegmenter 인물 분리 시작...");
+
+        const { width, height } = frame;
+        
+        try {
+            // 캔버스를 이미지로 변환
+            const imageBlob = await new Promise(resolve => {
+                frame.toBlob(resolve, 'image/png');
+            });
+            
+            if (!imageBlob) {
+                throw new Error("캔버스를 이미지로 변환하는데 실패했습니다.");
+            }
+            
+            // Blob을 이미지로 변환
+            const img = new Image();
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+                img.src = URL.createObjectURL(imageBlob);
+            });
+            
+            // ImageSegmenter로 이미지 분할
+            const segmentationResult = this.imageSegmenter.segment(img);
+            
+            // 결과가 없으면 에러
+            if (!segmentationResult || !segmentationResult.categoryMask) {
+                throw new Error("유효한 분할 결과를 받지 못했습니다.");
+            }
+            
+            // 카테고리 마스크 가져오기
+            const mask = segmentationResult.categoryMask;
+            
+            // 결과 캔버스 생성 (인물 분리용)
+            const personCanvas = document.createElement('canvas');
+            personCanvas.width = width;
+            personCanvas.height = height;
+            const personCtx = personCanvas.getContext('2d');
+            
+            // 마스크 캔버스 생성
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = width;
+            maskCanvas.height = height;
+            const maskCtx = maskCanvas.getContext('2d');
+            
+            // 카테고리 마스크 데이터 처리
+            const maskWidth = mask.width;
+            const maskHeight = mask.height;
+            const maskData = mask.getAsUint8Array();
+            const maskImageData = maskCtx.createImageData(maskWidth, maskHeight);
+            
+            // 사람 클래스는 일반적으로 인덱스 1 (0은 배경)
+            const personCategoryIndex = 1;
+            let opaquePixels = 0;
+            
+            // 마스크 이미지 만들기
+            for (let i = 0; i < maskData.length; i++) {
+                const category = maskData[i];
+                const dataIndex = i * 4; // RGBA 데이터의 인덱스
+                
+                if (category === personCategoryIndex) {
+                    // 인물로 분류된 픽셀은 흰색으로 설정
+                    maskImageData.data[dataIndex] = 255;     // R
+                    maskImageData.data[dataIndex + 1] = 255; // G
+                    maskImageData.data[dataIndex + 2] = 255; // B
+                    maskImageData.data[dataIndex + 3] = 255; // Alpha (불투명)
+                    opaquePixels++;
+                } else {
+                    // 배경은 투명하게 설정
+                    maskImageData.data[dataIndex] = 0;       // R
+                    maskImageData.data[dataIndex + 1] = 0;   // G
+                    maskImageData.data[dataIndex + 2] = 0;   // B
+                    maskImageData.data[dataIndex + 3] = 0;   // Alpha (투명)
+                }
+            }
+            
+            // 통계 정보
+            const totalPixels = maskWidth * maskHeight;
+            const personRatio = opaquePixels / totalPixels;
+            console.log(`인물 검출 비율: ${(personRatio * 100).toFixed(2)}% (${opaquePixels}/${totalPixels} 픽셀)`);
+            
+            // 마스크 이미지를 캔버스에 적용
+            maskCtx.putImageData(maskImageData, 0, 0);
+            
+            // 원본 이미지 그리기
+            personCtx.drawImage(img, 0, 0, width, height);
+            
+            // 마스크를 사용하여 인물만 유지하고 배경은 투명하게
+            personCtx.globalCompositeOperation = 'destination-in';
+            personCtx.drawImage(maskCanvas, 0, 0, width, height);
+            personCtx.globalCompositeOperation = 'source-over';
+            
+            // 에지 블러 효과 적용 (부드러운 경계를 위해)
+            const blurredCanvas = this._applyMaskBlur(personCanvas);
+            
+            // 메모리 해제
+            URL.revokeObjectURL(img.src);
+            
+            // 결과 반환
+            return {
+                maskCanvas: maskCanvas,
+                originalCanvas: frame,
+                personCanvas: blurredCanvas
+            };
+            
+        } catch (error) {
+            console.error("MediaPipe ImageSegmenter 처리 중 오류:", error);
+            console.warn("색상 기반 인물 분리로 폴백합니다.");
+            return this._segmentPersonByColor(frame);
+        }
+    }
+
+    /**
+     * 마스크에 블러 효과 적용 (에지를 부드럽게 하기 위함)
+     */
+    _applyMaskBlur(maskCanvas) {
+        const { width, height } = maskCanvas;
+        const blurredCanvas = document.createElement('canvas');
+        blurredCanvas.width = width;
+        blurredCanvas.height = height;
+        const blurredCtx = blurredCanvas.getContext('2d');
+        
+        // 원본 마스크 그리기
+        blurredCtx.drawImage(maskCanvas, 0, 0);
+        
+        // 블러 적용
+        const blurAmount = this.segmentationConfig.maskBlur;
+        blurredCtx.filter = `blur(${blurAmount}px)`;
+        blurredCtx.drawImage(maskCanvas, 0, 0);
+        
+        // 두 번째 블러 패스 (더 부드러운 에지를 위해)
+        blurredCtx.filter = `blur(${Math.max(1, blurAmount/2)}px)`;
+        blurredCtx.drawImage(blurredCanvas, 0, 0);
+        blurredCtx.filter = 'none';
+        
+        return blurredCanvas;
+    }
+
+    /**
+     * 색상 범위를 이용한 사람 분리 (HSV 색상 공간)
+     * 폴백 메서드로 사용
+     */
+    _segmentPersonByColor(frame) {
+        console.log("색상 기반 인물 분리 시작...");
+
+        // 캔버스에서 이미지 데이터 가져오기
+        const ctx = frame.getContext('2d');
+        const { width, height } = frame;
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        
+        // 결과를 저장할 마스크 생성
+        const maskCanvas = document.createElement('canvas');
+        maskCanvas.width = width;
+        maskCanvas.height = height;
+        const maskCtx = maskCanvas.getContext('2d');
+        
+        // 인물 마스크 생성
+        const maskImageData = maskCtx.createImageData(width, height);
+        const maskData = maskImageData.data;
+        
+        // 각 픽셀 처리
+        let detectedSkinPixels = 0;
+        let totalPixels = width * height;
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            
+            // RGB를 HSV로 변환
+            const [h, s, v] = this._rgbToHsv(r, g, b);
+            
+            // 피부색 범위 감지
+            const isSkin = this._isSkinPixel(h, s, v);
+            
+            if (isSkin) {
+                // 피부색 감지 카운트 증가
+                detectedSkinPixels++;
+                
+                // 피부색으로 감지된 픽셀은 원본 색상 유지하고 완전 불투명하게
+                maskData[i] = r;       // 마스크의 빨간색 채널
+                maskData[i + 1] = g;   // 마스크의 녹색 채널
+                maskData[i + 2] = b;   // 마스크의 파란색 채널
+                maskData[i + 3] = 255; // 마스크의 알파 채널 (완전 불투명)
+            } else {
+                // 피부색이 아닌 픽셀은 완전 투명하게 설정
+                maskData[i] = 0;
+                maskData[i + 1] = 0;
+                maskData[i + 2] = 0;
+                maskData[i + 3] = 0;
+            }
+        }
+        
+        // 디버깅: 피부색 감지 통계 출력
+        const skinPercentage = (detectedSkinPixels / totalPixels) * 100;
+        console.log(`피부색 감지: 총 ${totalPixels}픽셀 중 ${detectedSkinPixels}픽셀 감지 (${skinPercentage.toFixed(2)}%)`);
+        
+        // 마스크 개선 (노이즈 제거 및 에지 부드럽게)
+        this._improveSegmentationMask(maskData, width, height);
+        
+        // 결과 마스크 적용
+        maskCtx.putImageData(maskImageData, 0, 0);
+        
+        // 마스크 블러 처리 (에지를 부드럽게)
+        const blurredMaskCanvas = this._applyMaskBlur(maskCanvas);
+        
+        // 원본 이미지와 마스크 결합하여 투명 배경의 인물만 표시
+        const personCanvas = document.createElement('canvas');
+        personCanvas.width = width;
+        personCanvas.height = height;
+        const personCtx = personCanvas.getContext('2d');
+        
+        // 원본 이미지 그리기
+        personCtx.drawImage(frame, 0, 0);
+        
+        // 마스크를 사용하여 알파 채널 설정 (destination-in 연산)
+        personCtx.globalCompositeOperation = 'destination-in';
+        personCtx.drawImage(blurredMaskCanvas, 0, 0);
+        personCtx.globalCompositeOperation = 'source-over';
+        
+        return { 
+            maskCanvas: blurredMaskCanvas, 
+            originalCanvas: frame,
+            personCanvas: personCanvas
+        };
+    }
+    
+    /**
+     * RGB to HSV 변환
+     */
+    _rgbToHsv(r, g, b) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+        
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const d = max - min;
+        
+        let h, s, v;
+        
+        if (d === 0) {
+            h = 0;
+        } else if (max === r) {
+            h = ((g - b) / d) % 6;
+        } else if (max === g) {
+            h = (b - r) / d + 2;
+        } else {
+            h = (r - g) / d + 4;
+        }
+        
+        h = Math.round(h * 60);
+        if (h < 0) h += 360;
+        
+        s = max === 0 ? 0 : d / max;
+        v = max;
+        
+        return [h, s, v];
+    }
+    
+    /**
+     * 피부색 픽셀 감지
+     */
+    _isSkinPixel(h, s, v) {
+        // 피부색에 대한 확장된 HSV 범위
+        const isHueSkin = (h >= 0 && h <= 40) || (h >= 340 && h <= 360);
+        const isSaturationOk = s >= 0.1 && s <= 0.7;
+        const isValueOk = v >= 0.3 && v <= 0.95;
+        
+        return isHueSkin && isSaturationOk && isValueOk;
+    }
+    
+    /**
+     * 세그먼테이션 마스크 개선 (노이즈 제거 및 구멍 채우기)
+     */
+    _improveSegmentationMask(maskData, width, height) {
+        // 간단한 모폴로지 연산 (팽창 후 침식)
+        // 임시 버퍼 생성
+        const tempBuffer = new Uint8ClampedArray(maskData.length);
+        
+        // 팽창 연산 (작은 구멍 채우기)
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = (y * width + x) * 4;
+                
+                // 주변 8개 픽셀에 대해 검사
+                let hasNeighborPerson = false;
+                
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        
+                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                            const nidx = (ny * width + nx) * 4;
+                            if (maskData[nidx + 3] > 100) { // 어느 정도 불투명한 픽셀
+                                hasNeighborPerson = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (hasNeighborPerson) break;
+                }
+                
+                // 주변에 사람 픽셀이 있으면 현재 픽셀도 사람으로 설정
+                if (hasNeighborPerson) {
+                    tempBuffer[idx] = maskData[idx];
+                    tempBuffer[idx + 1] = maskData[idx + 1];
+                    tempBuffer[idx + 2] = maskData[idx + 2];
+                    tempBuffer[idx + 3] = 255;
+                } else {
+                    tempBuffer[idx] = maskData[idx];
+                    tempBuffer[idx + 1] = maskData[idx + 1];
+                    tempBuffer[idx + 2] = maskData[idx + 2];
+                    tempBuffer[idx + 3] = maskData[idx + 3];
+                }
+            }
+        }
+        
+        // 침식 연산 (노이즈 제거)
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = (y * width + x) * 4;
+                
+                // 현재 픽셀이 사람 픽셀이라면
+                if (tempBuffer[idx + 3] > 0) {
+                    // 주변 8개 픽셀에 대해 검사
+                    let neighborCount = 0;
+                    
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            
+                            const nx = x + dx;
+                            const ny = y + dy;
+                            
+                            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                                const nidx = (ny * width + nx) * 4;
+                                if (tempBuffer[nidx + 3] > 0) {
+                                    neighborCount++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 주변에 충분한 사람 픽셀이 없으면 제거 (노이즈 제거)
+                    if (neighborCount < 4) {
+                        maskData[idx + 3] = 0;
+                    }
+                }
+            }
+        }
+    }
+}

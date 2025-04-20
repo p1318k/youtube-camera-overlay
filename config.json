@@ -1,0 +1,16 @@
+{
+  "videoSource": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "youtube": {
+    "apiKey": "여기에_YouTube_API_키_입력",
+    "streamTitle": "Live Stream Title",
+    "streamDescription": "Description of the live stream",
+    "privacyStatus": "public"
+  },
+  "personSegmentation": {
+    "confidenceThreshold": 0.5
+  }
+}
