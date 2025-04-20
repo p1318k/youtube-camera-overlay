@@ -66,7 +66,7 @@ class PersonSegmenter {
                 
                 // 모델 옵션 설정
                 await this.selfieSegmentation.setOptions({
-                    modelSelection: 1, // 0: 일반 모델, 1: 풍경 모델(더 정확)
+                    modelSelection: 0, // 0: 일반 모델(더 가벼움), 1: 풍경 모델(더 정확하지만 무거움)
                     selfieMode: this.segmentationConfig.flipHorizontal
                 });
                 
@@ -248,11 +248,11 @@ class PersonSegmenter {
         try {
             // 이미지가 너무 크면 리사이징 (메모리 오류 방지)
             let processedFrame = frame;
-            const maxSize = this.segmentationConfig.maxImageSize;
+            // 최대 이미지 크기를 더 작게 설정 (메모리 문제 해결)
+            const maxSize = Math.min(this.segmentationConfig.maxImageSize, 480);
             
+            // 메모리 오류를 방지하기 위해 이미지 항상 리사이징
             if (originalWidth > maxSize || originalHeight > maxSize) {
-                console.log(`이미지 크기 조정: ${originalWidth}x${originalHeight} -> 최대 ${maxSize}px`);
-                
                 // 새로운 크기 계산 (종횡비 유지)
                 const scale = Math.min(maxSize / originalWidth, maxSize / originalHeight);
                 const newWidth = Math.floor(originalWidth * scale);
@@ -262,50 +262,77 @@ class PersonSegmenter {
                 const resizedCanvas = document.createElement('canvas');
                 resizedCanvas.width = newWidth;
                 resizedCanvas.height = newHeight;
-                const resizedCtx = resizedCanvas.getContext('2d');
+                const resizedCtx = resizedCanvas.getContext('2d', { willReadFrequently: true });
                 resizedCtx.drawImage(frame, 0, 0, newWidth, newHeight);
                 
                 processedFrame = resizedCanvas;
-                console.log(`이미지 리사이징 완료: ${newWidth}x${newHeight}`);
+                console.log(`이미지 리사이징 완료: ${newWidth}x${newHeight} (메모리 최적화)`);
             }
             
-            // 이미지 데이터 안전성 검사
-            try {
-                // Canvas 컨텍스트에서 데이터 가져오기 시도 (유효성 테스트)
-                const testCtx = processedFrame.getContext('2d');
-                const testData = testCtx.getImageData(0, 0, Math.min(processedFrame.width, 10), Math.min(processedFrame.height, 10));
-                
-                // 이미지 데이터가 없으면 오류
-                if (!testData || !testData.data || testData.data.length === 0) {
-                    throw new Error("이미지 데이터가 유효하지 않습니다");
-                }
-            } catch (dataError) {
-                console.warn("이미지 데이터 검증 실패:", dataError);
-                return this._segmentPersonByColor(frame);
+            // 메모리 최적화: 가비지 컬렉션 실행 요청 (선택적)
+            if (window.gc) {
+                try { 
+                    window.gc(); 
+                    console.log("가비지 컬렉션 요청됨"); 
+                } catch(e) {}
             }
             
-            // MediaPipe 처리 (try-catch로 메모리 오류 포착)
-            try {
-                // 시간 측정 시작
-                const startTime = performance.now();
+            // 메모리 오류 감지를 위한 타임아웃 설정
+            let timeoutId;
+            const processingPromise = new Promise(async (resolve, reject) => {
+                // 처리 타임아웃 설정 (5초)
+                timeoutId = setTimeout(() => {
+                    reject(new Error("MediaPipe 처리 시간 초과 (메모리 오류 의심)"));
+                }, 5000);
                 
-                // selfie_segmentation은 이미지를 직접 입력으로 받음
-                await this.selfieSegmentation.send({ image: processedFrame });
-                
-                // 시간 측정 종료
-                const processingTime = performance.now() - startTime;
-                console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
-                
-                // 결과가 없으면 오류
-                if (!this.lastResults || !this.lastResults.segmentationMask) {
-                    throw new Error("유효한 분할 결과를 받지 못했습니다.");
+                try {
+                    // 시간 측정 시작
+                    const startTime = performance.now();
+                    
+                    // selfie_segmentation은 이미지를 직접 입력으로 받음
+                    await this.selfieSegmentation.send({ image: processedFrame });
+                    
+                    // 타임아웃 해제
+                    clearTimeout(timeoutId);
+                    
+                    // 시간 측정 종료
+                    const processingTime = performance.now() - startTime;
+                    console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
+                    
+                    // 결과가 없으면 오류
+                    if (!this.lastResults || !this.lastResults.segmentationMask) {
+                        throw new Error("유효한 분할 결과를 받지 못했습니다.");
+                    }
+                    
+                    // 오류 카운터 리셋 (성공)
+                    this.errorCount = 0;
+                    resolve();
+                } catch (mpError) {
+                    // 타임아웃 해제
+                    clearTimeout(timeoutId);
+                    reject(mpError);
                 }
-                
-                // 오류 카운터 리셋 (성공)
-                this.errorCount = 0;
+            });
+            
+            try {
+                await processingPromise;
             } catch (mpError) {
                 // 메모리 오류 또는 다른 MediaPipe 내부 오류 발생
                 console.error("MediaPipe 내부 처리 오류:", mpError);
+                
+                // 메모리 오류 감지 (error message 확인)
+                const errorMsg = mpError.toString().toLowerCase();
+                const isMemoryError = errorMsg.includes('memory') || 
+                                     errorMsg.includes('out of bounds') || 
+                                     errorMsg.includes('allocation') ||
+                                     errorMsg.includes('heap') ||
+                                     errorMsg.includes('buffer');
+                
+                if (isMemoryError) {
+                    console.warn("메모리 관련 오류 감지됨, 설정 조정 중...");
+                    // 다음에 더 작은 이미지를 처리하도록 설정 조정
+                    this.segmentationConfig.maxImageSize = Math.max(240, Math.floor(this.segmentationConfig.maxImageSize * 0.8));
+                }
                 
                 // 연속 오류 카운트 증가
                 this.errorCount++;
@@ -319,7 +346,7 @@ class PersonSegmenter {
                 return this._segmentPersonByColor(frame);
             }
             
-            // 여기서부터는 정상 처리된 경우
+            // 여기서부터는 정상 처리된 경우만 실행됨
             // 결과 처리를 위한 캔버스 준비
             const personCanvas = document.createElement('canvas');
             personCanvas.width = originalWidth;
