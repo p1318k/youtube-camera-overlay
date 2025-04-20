@@ -25,6 +25,12 @@ class PersonSegmenter {
         this.errorCount = 0;
         this.maxErrorsBeforeFallback = 3;
         
+        // 타임스탬프 오류 처리 관련 변수
+        this.timestampErrorCount = 0;
+        this.maxTimestampErrors = 2;
+        this.lastFrameTime = 0;
+        this.resetRequired = false;
+        
         console.log("PersonSegmenter 생성됨");
     }
 
@@ -303,6 +309,21 @@ class PersonSegmenter {
                     if (!this.lastResults || !this.lastResults.segmentationMask) {
                         throw new Error("유효한 분할 결과를 받지 못했습니다.");
                     }
+                    
+                    // 타임스탬프 오류 감지
+                    const currentFrameTime = performance.now();
+                    if (this.lastFrameTime && currentFrameTime - this.lastFrameTime < 10) {
+                        this.timestampErrorCount++;
+                        console.warn(`타임스탬프 오류 감지 (${this.timestampErrorCount}/${this.maxTimestampErrors})`);
+                        if (this.timestampErrorCount >= this.maxTimestampErrors) {
+                            console.error("타임스탬프 오류가 임계값을 초과했습니다. 초기화가 필요합니다.");
+                            this.resetRequired = true;
+                            throw new Error("타임스탬프 오류로 인해 초기화 필요");
+                        }
+                    } else {
+                        this.timestampErrorCount = 0; // 오류 카운터 리셋
+                    }
+                    this.lastFrameTime = currentFrameTime;
                     
                     // 오류 카운터 리셋 (성공)
                     this.errorCount = 0;
