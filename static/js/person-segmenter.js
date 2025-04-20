@@ -15,8 +15,14 @@ class PersonSegmenter {
             flipHorizontal: true // 수평 뒤집기 (셀카 모드)
         };
         
-        // MediaPipe CDN 경로 설정
-        this.mediapipeCDNURL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
+        // MediaPipe CDN 경로 설정 (여러 버전 설정)
+        this.mediapipeCDNURLs = [
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest', // 최신 버전
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8', // 안정 버전 1
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3'  // 이전 버전 (기존 코드)
+        ];
+        this.mediapipeCDNURL = this.mediapipeCDNURLs[0]; // 기본적으로 최신 버전 사용
+        this.currentCDNIndex = 0;
         
         this.maxRetries = 3;     // 초기화 최대 재시도 횟수
         this.retryCount = 0;     // 현재 재시도 횟수
