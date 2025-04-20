@@ -1,7 +1,7 @@
 /**
  * PersonSegmenter 클래스 - 카메라 영상에서 사람을 분리하는 기능 담당
- * MediaPipe Tasks Vision의 ImageSegmenter를 사용하여 구현
- * 참고: https://codepen.io/mediapipe-preview/pen/xxJNjbN
+ * MediaPipe Image Segmentation을 사용하여 구현
+ * 참고: https://codepen.io/mediapipe/pen/wvJyQpq
  */
 class PersonSegmenter {
     constructor() {
@@ -14,19 +14,15 @@ class PersonSegmenter {
             edgeBlur: 10,        // 에지 블러 강도
             flipHorizontal: true // 수평 뒤집기 (셀카 모드)
         };
-        this.visionTasksReady = false;
         
-        // 로컬 파일 경로 설정 (다양한 상대 경로 시나리오 처리)
-        this.baseModelPath = location.pathname.includes('/templates/') ? '../static/libs/mediapipe' : './static/libs/mediapipe';
-        this.modelAssetPath = `${this.baseModelPath}/selfie_segmenter.tflite`;
+        // MediaPipe CDN 경로 설정
+        this.mediapipeCDNURL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
         
         this.maxRetries = 3;     // 초기화 최대 재시도 횟수
         this.retryCount = 0;     // 현재 재시도 횟수
         this.useMediaPipe = true; // MediaPipe 사용 여부 플래그
-        this.dynamicImportFailed = false; // ES 모듈 동적 가져오기 실패 여부
         
-        // 디버그 로깅 추가
-        console.log("PersonSegmenter 생성됨. 모델 경로:", this.modelAssetPath);
+        console.log("PersonSegmenter 생성됨");
     }
 
     /**
@@ -48,127 +44,72 @@ class PersonSegmenter {
                 return this.initFallbackMethod();
             }
             
-            // 먼저 기존 방식으로 MediaPipe 모듈 확인
-            this._ensureMediaPipeModules();
-            
-            // 기존 방식으로 로딩이 안 되면 동적 로딩 시도
-            if (!this._getFilesetResolver() || !this._getImageSegmenter()) {
-                try {
-                    await this._loadMediaPipeDynamically();
-                } catch (importError) {
-                    console.error("MediaPipe 동적 로드 실패:", importError);
-                    this.dynamicImportFailed = true;
-                }
-            }
-            
-            // FilesetResolver와 ImageSegmenter 모듈이 있는지 다시 확인
-            const FilesetResolver = this._getFilesetResolver();
-            const ImageSegmenter = this._getImageSegmenter();
-            
-            if (!FilesetResolver || !ImageSegmenter) {
-                console.error("필수 MediaPipe 모듈을 찾을 수 없습니다 (FilesetResolver, ImageSegmenter)");
-                
+            // MediaPipe 스크립트 로드
+            try {
+                await this._loadMediaPipeScripts();
+            } catch (error) {
+                console.error("MediaPipe 스크립트 로드 실패:", error);
                 if (this.retryCount < this.maxRetries) {
                     this.retryCount++;
                     console.log(`${this.retryCount}번째 재시도 중... (최대 ${this.maxRetries}회)`);
-                    
-                    // 재시도 전 라이브러리를 다시 로드하도록 스크립트 추가
-                    if (this.dynamicImportFailed) {
-                        this._injectIIFEScript();
-                    }
-                    
-                    // 3초 후 재시도
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     return this.initialize();
                 } else {
-                    console.warn("최대 재시도 횟수 초과. 대체 메서드로 전환합니다.");
                     this.useMediaPipe = false;
                     return this.initFallbackMethod();
                 }
             }
             
-            console.log("MediaPipe 모듈 사용 가능. Vision Tasks 초기화 중...");
-            
+            // ImageSegmenter 생성
             try {
-                // MediaPipe vision module 초기화
-                const visionPaths = [
-                    "./static/libs/mediapipe",
-                    "../static/libs/mediapipe"
-                ];
+                // 모델 URL
+                const modelAssetPath = `${this.mediapipeCDNURL}/wasm/selfie_segmentation.tflite`;
                 
-                let vision = null;
-                let lastError = null;
-                
-                // 여러 경로를 순차적으로 시도
-                for (const path of visionPaths) {
-                    try {
-                        console.log(`Vision Tasks 로드 시도: ${path}`);
-                        vision = await FilesetResolver.forVisionTasks(path);
-                        if (vision) {
-                            console.log(`Vision Tasks 로드 성공: ${path}`);
-                            break;
-                        }
-                    } catch (error) {
-                        console.warn(`경로 ${path}에서 Vision Tasks 로드 실패:`, error);
-                        lastError = error;
-                    }
-                }
-                
-                if (!vision) {
-                    throw new Error("모든 경로에서 Vision Tasks 모듈 로드에 실패했습니다: " + lastError);
-                }
+                // Vision Tasks 로드
+                const vision = await FilesetResolver.forVisionTasks(
+                    `${this.mediapipeCDNURL}/wasm`
+                );
                 
                 console.log("Vision Tasks 초기화 완료. ImageSegmenter 생성 중...");
                 
-                // ImageSegmenter 초기화 시도
-                try {
-                    this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
-                        baseOptions: {
-                            modelAssetPath: this.modelAssetPath,
-                            delegate: "GPU"  // GPU 가속 시도
-                        },
-                        runningMode: "IMAGE",
-                        outputCategoryMask: true
-                    });
-                } catch (gpuError) {
-                    console.warn("GPU 가속 모드 실패:", gpuError);
-                    console.log("CPU 모드로 다시 시도합니다...");
-                    
-                    // GPU 실패 시 CPU로 다시 시도
-                    this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
-                        baseOptions: {
-                            modelAssetPath: this.modelAssetPath,
-                            delegate: "CPU"  // CPU 모드로 시도
-                        },
-                        runningMode: "IMAGE",
-                        outputCategoryMask: true
-                    });
-                }
-                
-                if (!this.imageSegmenter) {
-                    throw new Error("ImageSegmenter 인스턴스 생성에 실패했습니다");
-                }
+                // ImageSegmenter 초기화
+                this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: modelAssetPath,
+                        delegate: "GPU"
+                    },
+                    runningMode: "IMAGE",
+                    outputCategoryMask: true
+                });
                 
                 console.log("MediaPipe ImageSegmenter 초기화 완료!");
                 this.initialized = true;
-                this.useMediaPipe = true;
                 return true;
                 
-            } catch (initError) {
-                console.error("MediaPipe ImageSegmenter 초기화 중 오류:", initError);
+            } catch (gpuError) {
+                console.warn("GPU 모드 실패:", gpuError);
+                console.log("CPU 모드로 다시 시도합니다...");
                 
-                // 재시도 로직
-                if (this.retryCount < this.maxRetries) {
-                    this.retryCount++;
-                    console.log(`초기화 실패. ${this.retryCount}번째 재시도... (최대 ${this.maxRetries}회)`);
+                try {
+                    const modelAssetPath = `${this.mediapipeCDNURL}/wasm/selfie_segmentation.tflite`;
+                    const vision = await FilesetResolver.forVisionTasks(
+                        `${this.mediapipeCDNURL}/wasm`
+                    );
                     
-                    // 지수 백오프로 재시도 (1초, 2초, 4초...)
-                    const backoffTime = Math.pow(2, this.retryCount) * 1000;
-                    await new Promise(resolve => setTimeout(resolve, backoffTime));
+                    this.imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: modelAssetPath,
+                            delegate: "CPU"
+                        },
+                        runningMode: "IMAGE",
+                        outputCategoryMask: true
+                    });
                     
-                    return this.initialize();
-                } else {
-                    console.warn("최대 재시도 횟수 초과. 폴백 메서드를 활성화합니다.");
+                    console.log("MediaPipe ImageSegmenter (CPU 모드) 초기화 완료!");
+                    this.initialized = true;
+                    return true;
+                } catch (cpuError) {
+                    console.error("CPU 모드에서도 실패:", cpuError);
                     this.useMediaPipe = false;
                     return this.initFallbackMethod();
                 }
@@ -181,111 +122,40 @@ class PersonSegmenter {
     }
     
     /**
-     * MediaPipe 모듈 동적 로딩 시도 
+     * MediaPipe 스크립트 로드
      */
-    async _loadMediaPipeDynamically() {
-        console.log("MediaPipe 모듈을 동적으로 로드하는 시도...");
+    async _loadMediaPipeScripts() {
+        console.log("MediaPipe 스크립트 로드 중...");
         
-        try {
-            // 동적으로 IIFE 스크립트 삽입
-            return await this._injectIIFEScript();
-        } catch (error) {
-            console.error("MediaPipe 동적 로드 실패:", error);
-            throw error;
+        // 이미 로드되었는지 확인
+        if (window.FilesetResolver && window.ImageSegmenter) {
+            console.log("MediaPipe 모듈이 이미 로드되어 있습니다");
+            return;
         }
-    }
-    
-    /**
-     * IIFE 형식의 스크립트를 동적으로 삽입
-     */
-    _injectIIFEScript() {
+        
+        // 스크립트 로드
         return new Promise((resolve, reject) => {
-            // 이미 로드된 스크립트는 중복 로드하지 않음
-            if (document.querySelector('script[data-mediapipe-dynamic="true"]')) {
-                resolve();
-                return;
+            // 기존 스크립트가 있으면 제거
+            const existingScript = document.querySelector('script[data-mediapipe="vision-tasks"]');
+            if (existingScript) {
+                existingScript.remove();
             }
             
+            // 새 스크립트 생성
             const script = document.createElement('script');
-            script.src = "./static/libs/mediapipe/vision_bundle_iife.min.js";
-            script.dataset.mediapipeDynamic = "true";
-            
+            script.src = `${this.mediapipeCDNURL}/vision_bundle.js`;
+            script.dataset.mediapipe = "vision-tasks";
             script.onload = () => {
-                console.log("MediaPipe IIFE 스크립트 동적 로드 완료");
-                // 전역 객체에 노출
-                if (window.mediapipe && window.mediapipe.tasks) {
-                    if (window.mediapipe.tasks.vision && window.mediapipe.tasks.vision.ImageSegmenter) {
-                        window.ImageSegmenter = window.mediapipe.tasks.vision.ImageSegmenter;
-                    }
-                    
-                    if (window.mediapipe.tasks.core && window.mediapipe.tasks.core.FilesetResolver) {
-                        window.FilesetResolver = window.mediapipe.tasks.core.FilesetResolver;
-                    }
-                }
-                
+                console.log("MediaPipe 스크립트 로드 완료");
                 resolve();
             };
-            
             script.onerror = (error) => {
-                console.error("MediaPipe IIFE 스크립트 로드 실패:", error);
+                console.error("MediaPipe 스크립트 로드 실패:", error);
                 reject(error);
             };
             
             document.head.appendChild(script);
         });
-    }
-    
-    /**
-     * MediaPipe 모듈 사용 가능성 확인 및 필요시 폴백 설정
-     */
-    _ensureMediaPipeModules() {
-        if (window.FilesetResolver && window.ImageSegmenter) {
-            console.log("MediaPipe 모듈이 전역 변수로 발견되었습니다");
-            return;
-        }
-        
-        // mediapipe 네임스페이스로부터 모듈 노출 시도
-        if (window.mediapipe && window.mediapipe.tasks) {
-            console.log("mediapipe 네임스페이스에서 모듈을 찾았습니다. 전역으로 노출합니다...");
-            
-            if (window.mediapipe.tasks.core && window.mediapipe.tasks.core.FilesetResolver) {
-                window.FilesetResolver = window.mediapipe.tasks.core.FilesetResolver;
-            }
-            
-            if (window.mediapipe.tasks.vision && window.mediapipe.tasks.vision.ImageSegmenter) {
-                window.ImageSegmenter = window.mediapipe.tasks.vision.ImageSegmenter;
-            }
-        }
-    }
-
-    /**
-     * FilesetResolver 객체 가져오기
-     */
-    _getFilesetResolver() {
-        if (window.FilesetResolver) {
-            return window.FilesetResolver;
-        }
-        
-        if (window.mediapipe && window.mediapipe.tasks && window.mediapipe.tasks.core) {
-            return window.mediapipe.tasks.core.FilesetResolver;
-        }
-        
-        return null;
-    }
-    
-    /**
-     * ImageSegmenter 객체 가져오기
-     */
-    _getImageSegmenter() {
-        if (window.ImageSegmenter) {
-            return window.ImageSegmenter;
-        }
-        
-        if (window.mediapipe && window.mediapipe.tasks && window.mediapipe.tasks.vision) {
-            return window.mediapipe.tasks.vision.ImageSegmenter;
-        }
-        
-        return null;
     }
 
     /**
