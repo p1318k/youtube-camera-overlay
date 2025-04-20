@@ -70,11 +70,11 @@ class PersonSegmenter {
                     this.lastResults = results;
                 });
                 
-                // 모델 옵션 설정
-                await this.selfieSegmentation.setOptions({
-                    modelSelection: 0, // 0: 일반 모델(더 가벼움), 1: 풍경 모델(더 정확하지만 무거움)
-                    selfieMode: this.segmentationConfig.flipHorizontal
-                });
+                // // 모델 옵션 설정
+                // await this.selfieSegmentation.setOptions({
+                //     modelSelection: 0, // 0: 일반 모델(더 가벼움), 1: 풍경 모델(더 정확하지만 무거움)
+                //     selfieMode: this.segmentationConfig.flipHorizontal
+                // });
                 
                 this.initialized = true;
                 console.log("MediaPipe Selfie Segmentation 초기화 완료!");
@@ -116,10 +116,14 @@ class PersonSegmenter {
                 // 메모리 관련 문제 해결을 위한 설정
                 // WASM 메모리 설정 및 성능 최적화
                 window.Module = window.Module || {};
-                window.Module.arguments = window.Module.arguments || [];
+                
+                // 주의: Module.arguments 대신 arguments_ 사용 (WASM 모듈 호환성)
                 window.Module.locateFile = (file) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`;
                 };
+                
+                // arguments 대신 arguments_ 사용 (새로운 명명 규칙)
+                window.arguments_ = window.arguments_ || [];
                 
                 // 메모리 부족 오류 방지를 위한 힙 설정
                 window.Module.TOTAL_MEMORY = 50 * 1024 * 1024; // 50MB
