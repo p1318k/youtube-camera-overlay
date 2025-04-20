@@ -220,6 +220,49 @@ class PersonSegmenter {
     }
 
     /**
+     * 타임스탬프 오류 감지 시 MediaPipe 인스턴스 재설정
+     */
+    async resetSelfieSegmentation() {
+        console.log("MediaPipe Selfie Segmentation 재설정 중...");
+        
+        // 기존 인스턴스 정리
+        if (this.selfieSegmentation) {
+            try {
+                // 기존 리소스 해제 시도
+                await this.selfieSegmentation.close();
+            } catch (e) {
+                console.warn("SelfieSegmentation 인스턴스 정리 중 오류:", e);
+            }
+            this.selfieSegmentation = null;
+        }
+        
+        // 잠시 대기 (리소스 정리 시간 확보)
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // 재초기화
+        this.initialized = false;
+        this.lastResults = null;
+        this.timestampErrorCount = 0;
+        this.resetRequired = false;
+        
+        try {
+            // 가비지 컬렉션 요청 (메모리 정리)
+            if (window.gc) {
+                try { window.gc(); } catch(e) {}
+            }
+            
+            // 다시 초기화
+            await this.initialize();
+            console.log("MediaPipe Selfie Segmentation 재설정 완료");
+            return true;
+        } catch (error) {
+            console.error("MediaPipe 재설정 실패:", error);
+            this.useMediaPipe = false;  // 폴백 메서드로 전환
+            return false;
+        }
+    }
+
+    /**
      * 영상 프레임에서 사람 마스크 생성
      */
     async segmentPerson(frame) {
@@ -228,11 +271,69 @@ class PersonSegmenter {
         }
 
         try {
+            // 초기화 필요 플래그가 설정되어 있으면 MediaPipe 재설정
+            if (this.resetRequired) {
+                console.log("타임스탬프 오류로 인한 재설정 실행...");
+                await this.resetSelfieSegmentation();
+            }
+            
+            // 타임스탬프 오류 감지를 위한 오류 메시지 리스너 등록
+            const detectTimestampError = (error) => {
+                const errorStr = error.toString().toLowerCase();
+                const isTimestampError = errorStr.includes('timestamp mismatch') || 
+                                        errorStr.includes('packet timestamp') ||
+                                        errorStr.includes('not strictly monotonically increasing');
+                
+                if (isTimestampError) {
+                    console.warn("타임스탬프 오류 감지됨: MediaPipe 재설정 필요");
+                    this.timestampErrorCount++;
+                    
+                    if (this.timestampErrorCount >= this.maxTimestampErrors) {
+                        this.resetRequired = true;
+                    }
+                }
+                
+                return isTimestampError;
+            };
+            
             // MediaPipe 사용이 가능하면 SelfieSegmentation 사용
             if (this.useMediaPipe && this.selfieSegmentation) {
-                return await this._segmentPersonWithMediaPipe(frame);
-            } 
-            // 그렇지 않으면, 색상 기반 대체 메서드 사용
+                try {
+                    return await this._segmentPersonWithMediaPipe(frame);
+                } catch (mpError) {
+                    // MediaPipe 오류 메시지에서 타임스탬프 오류 감지
+                    const isTimestampIssue = detectTimestampError(mpError);
+                    
+                    if (isTimestampIssue) {
+                        // 즉시 재설정이 필요한 경우
+                        if (this.resetRequired) {
+                            await this.resetSelfieSegmentation();
+                            // 재시도 (한 번만)
+                            try {
+                                return await this._segmentPersonWithMediaPipe(frame);
+                            } catch (retryError) {
+                                console.error("MediaPipe 재시도 실패:", retryError);
+                                return this._segmentPersonByColor(frame);
+                            }
+                        } else {
+                            // 이번은 색상 기반 분리로 처리하고 다음에 재설정
+                            return this._segmentPersonByColor(frame);
+                        }
+                    } else {
+                        // 다른 오류는 기존 처리 방식 사용
+                        console.error("MediaPipe 처리 오류:", mpError);
+                        this.errorCount++;
+                        
+                        if (this.errorCount >= this.maxErrorsBeforeFallback) {
+                            this.useMediaPipe = false;
+                        }
+                        
+                        return this._segmentPersonByColor(frame);
+                    }
+                }
+            }
+            
+            // MediaPipe를 사용할 수 없는 경우 색상 기반 대체 메서드 사용
             return this._segmentPersonByColor(frame);
         } catch (error) {
             console.error("인물 분리 중 오류 발생:", error);
