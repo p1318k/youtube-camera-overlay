@@ -148,19 +148,48 @@ class PersonSegmenter {
                     existingScript.remove();
                 }
                 
-                // 새 스크립트 생성
+                // 새 스크립트 생성 - IIFE 버전 사용 (모듈이 아닌 즉시 실행 함수 버전)
                 const script = document.createElement('script');
-                script.src = `${this.mediapipeCDNURL}/vision_bundle.js`;
+                
+                // vision_bundle.js 대신 IIFE 버전 사용
+                script.src = `${this.mediapipeCDNURL}/vision_bundle_iife.js`;
                 script.dataset.mediapipe = "vision-tasks";
                 script.crossOrigin = "anonymous";  // CORS 오류 방지
                 
                 script.onload = () => {
                     console.log(`MediaPipe 스크립트 로드 완료 (${this.mediapipeCDNURL})`);
-                    resolve();
+                    
+                    // 잠시 대기 후 FilesetResolver 정의 확인
+                    setTimeout(() => {
+                        if (window.FilesetResolver && window.ImageSegmenter) {
+                            console.log("MediaPipe 객체가 전역 스코프에 성공적으로 로드됨");
+                            resolve();
+                        } else {
+                            console.error("MediaPipe 스크립트가 로드되었지만 필요한 객체를 찾을 수 없음");
+                            // 다음 CDN URL 시도
+                            this.currentCDNIndex++;
+                            if (this.currentCDNIndex < this.mediapipeCDNURLs.length) {
+                                this.mediapipeCDNURL = this.mediapipeCDNURLs[this.currentCDNIndex];
+                                console.log(`다음 CDN URL로 시도: ${this.mediapipeCDNURL}`);
+                                setTimeout(loadScript, 500);  // 잠시 대기 후 다시 시도
+                            } else {
+                                // 모든 CDN URL 시도 실패
+                                reject(new Error("MediaPipe 객체를 찾을 수 없음"));
+                            }
+                        }
+                    }, 500);
                 };
                 
                 script.onerror = (error) => {
                     console.error(`MediaPipe 스크립트 로드 실패 (${this.mediapipeCDNURL}):`, error);
+                    
+                    // 파일명 백업 시도 (vision_bundle_iife.min.js)
+                    if (!script.src.includes('min.js')) {
+                        console.log("압축 버전(min.js)으로 다시 시도합니다.");
+                        script.src = `${this.mediapipeCDNURL}/vision_bundle_iife.min.js`;
+                        document.head.appendChild(script);
+                        return;
+                    }
                     
                     // 다음 CDN URL 시도
                     this.currentCDNIndex++;
