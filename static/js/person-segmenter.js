@@ -141,26 +141,45 @@ class PersonSegmenter {
         
         // 스크립트 로드
         return new Promise((resolve, reject) => {
-            // 기존 스크립트가 있으면 제거
-            const existingScript = document.querySelector('script[data-mediapipe="vision-tasks"]');
-            if (existingScript) {
-                existingScript.remove();
-            }
-            
-            // 새 스크립트 생성
-            const script = document.createElement('script');
-            script.src = `${this.mediapipeCDNURL}/vision_bundle.js`;
-            script.dataset.mediapipe = "vision-tasks";
-            script.onload = () => {
-                console.log("MediaPipe 스크립트 로드 완료");
-                resolve();
+            const loadScript = () => {
+                // 기존 스크립트가 있으면 제거
+                const existingScript = document.querySelector('script[data-mediapipe="vision-tasks"]');
+                if (existingScript) {
+                    existingScript.remove();
+                }
+                
+                // 새 스크립트 생성
+                const script = document.createElement('script');
+                script.src = `${this.mediapipeCDNURL}/vision_bundle.js`;
+                script.dataset.mediapipe = "vision-tasks";
+                script.crossOrigin = "anonymous";  // CORS 오류 방지
+                
+                script.onload = () => {
+                    console.log(`MediaPipe 스크립트 로드 완료 (${this.mediapipeCDNURL})`);
+                    resolve();
+                };
+                
+                script.onerror = (error) => {
+                    console.error(`MediaPipe 스크립트 로드 실패 (${this.mediapipeCDNURL}):`, error);
+                    
+                    // 다음 CDN URL 시도
+                    this.currentCDNIndex++;
+                    if (this.currentCDNIndex < this.mediapipeCDNURLs.length) {
+                        this.mediapipeCDNURL = this.mediapipeCDNURLs[this.currentCDNIndex];
+                        console.log(`다음 CDN URL로 시도: ${this.mediapipeCDNURL}`);
+                        setTimeout(loadScript, 500);  // 잠시 대기 후 다시 시도
+                    } else {
+                        // 모든 CDN URL 시도 실패
+                        console.error("모든 CDN URL에서 MediaPipe 로드 실패");
+                        reject(error);
+                    }
+                };
+                
+                document.head.appendChild(script);
             };
-            script.onerror = (error) => {
-                console.error("MediaPipe 스크립트 로드 실패:", error);
-                reject(error);
-            };
             
-            document.head.appendChild(script);
+            // 첫 번째 URL로 로드 시작
+            loadScript();
         });
     }
 
