@@ -71,10 +71,10 @@ class PersonSegmenter {
                 });
                 
                 // // 모델 옵션 설정
-                // await this.selfieSegmentation.setOptions({
-                //     modelSelection: 0, // 0: 일반 모델(더 가벼움), 1: 풍경 모델(더 정확하지만 무거움)
-                //     selfieMode: this.segmentationConfig.flipHorizontal
-                // });
+                await this.selfieSegmentation.setOptions({
+                    modelSelection: 1, // 0: 일반 모델(더 가벼움), 1: 풍경 모델(더 정확하지만 무거움)
+                    selfieMode: this.segmentationConfig.flipHorizontal
+                });
                 
                 this.initialized = true;
                 console.log("MediaPipe Selfie Segmentation 초기화 완료!");
