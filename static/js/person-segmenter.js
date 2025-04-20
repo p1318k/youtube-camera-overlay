@@ -121,17 +121,7 @@ class PersonSegmenter {
                 window.Module.locateFile = (file) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`;
                 };
-                
-                // arguments 대신 arguments_ 사용 (새로운 명명 규칙)
-                window.arguments_ = window.arguments_ || [];
-                
-                // 메모리 부족 오류 방지를 위한 힙 설정
-                window.Module.TOTAL_MEMORY = 50 * 1024 * 1024; // 50MB
-                window.Module.noInitialRun = true;
-                window.Module.onRuntimeInitialized = () => {
-                    console.log("MediaPipe WASM 런타임 초기화 완료");
-                };
-                
+
                 // 로딩 타임아웃 설정
                 const loadTimeout = setTimeout(() => {
                     console.error("MediaPipe 로딩 타임아웃");
@@ -358,6 +348,8 @@ class PersonSegmenter {
             console.warn("유효하지 않은 입력 프레임");
             return this._segmentPersonByColor(frame);
         }
+
+        console.log("originalWidth:", originalWidth, "originalHeight:", originalHeight);
         
         try {
             // 시간 측정 시작
