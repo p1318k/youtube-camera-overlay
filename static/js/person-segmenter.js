@@ -12,13 +12,18 @@ class PersonSegmenter {
             maskOpacity: 1.0,    // 마스크 불투명도
             maskBlur: 5,         // 마스크 블러 강도
             edgeBlur: 10,        // 에지 블러 강도
-            flipHorizontal: true // 수평 뒤집기 (셀카 모드)
+            flipHorizontal: true, // 수평 뒤집기 (셀카 모드)
+            maxImageSize: 640    // 최대 이미지 크기 (메모리 오류 방지)
         };
         
         // 초기화 상태 변수
         this.maxRetries = 3;     // 초기화 최대 재시도 횟수
         this.retryCount = 0;     // 현재 재시도 횟수
         this.useMediaPipe = true; // MediaPipe 사용 여부 플래그
+        
+        // 오류 발생 카운터 (연속적인 오류 감지)
+        this.errorCount = 0;
+        this.maxErrorsBeforeFallback = 3;
         
         console.log("PersonSegmenter 생성됨");
     }
@@ -164,38 +169,111 @@ class PersonSegmenter {
      * MediaPipe Selfie Segmentation을 사용한 인물 분리
      */
     async _segmentPersonWithMediaPipe(frame) {
-        const { width, height } = frame;
+        const originalWidth = frame.width;
+        const originalHeight = frame.height;
+        
+        // 입력 이미지가 없거나 너무 작으면 폴백
+        if (!frame || originalWidth < 10 || originalHeight < 10) {
+            console.warn("유효하지 않은 입력 프레임");
+            return this._segmentPersonByColor(frame);
+        }
         
         try {
-            // selfie_segmentation은 이미지를 직접 입력으로 받음
-            await this.selfieSegmentation.send({ image: frame });
+            // 이미지가 너무 크면 리사이징 (메모리 오류 방지)
+            let processedFrame = frame;
+            const maxSize = this.segmentationConfig.maxImageSize;
             
-            // 결과가 없으면 오류
-            if (!this.lastResults || !this.lastResults.segmentationMask) {
-                throw new Error("유효한 분할 결과를 받지 못했습니다.");
+            if (originalWidth > maxSize || originalHeight > maxSize) {
+                console.log(`이미지 크기 조정: ${originalWidth}x${originalHeight} -> 최대 ${maxSize}px`);
+                
+                // 새로운 크기 계산 (종횡비 유지)
+                const scale = Math.min(maxSize / originalWidth, maxSize / originalHeight);
+                const newWidth = Math.floor(originalWidth * scale);
+                const newHeight = Math.floor(originalHeight * scale);
+                
+                // 임시 캔버스에 리사이징
+                const resizedCanvas = document.createElement('canvas');
+                resizedCanvas.width = newWidth;
+                resizedCanvas.height = newHeight;
+                const resizedCtx = resizedCanvas.getContext('2d');
+                resizedCtx.drawImage(frame, 0, 0, newWidth, newHeight);
+                
+                processedFrame = resizedCanvas;
+                console.log(`이미지 리사이징 완료: ${newWidth}x${newHeight}`);
             }
             
+            // 이미지 데이터 안전성 검사
+            try {
+                // Canvas 컨텍스트에서 데이터 가져오기 시도 (유효성 테스트)
+                const testCtx = processedFrame.getContext('2d');
+                const testData = testCtx.getImageData(0, 0, Math.min(processedFrame.width, 10), Math.min(processedFrame.height, 10));
+                
+                // 이미지 데이터가 없으면 오류
+                if (!testData || !testData.data || testData.data.length === 0) {
+                    throw new Error("이미지 데이터가 유효하지 않습니다");
+                }
+            } catch (dataError) {
+                console.warn("이미지 데이터 검증 실패:", dataError);
+                return this._segmentPersonByColor(frame);
+            }
+            
+            // MediaPipe 처리 (try-catch로 메모리 오류 포착)
+            try {
+                // 시간 측정 시작
+                const startTime = performance.now();
+                
+                // selfie_segmentation은 이미지를 직접 입력으로 받음
+                await this.selfieSegmentation.send({ image: processedFrame });
+                
+                // 시간 측정 종료
+                const processingTime = performance.now() - startTime;
+                console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
+                
+                // 결과가 없으면 오류
+                if (!this.lastResults || !this.lastResults.segmentationMask) {
+                    throw new Error("유효한 분할 결과를 받지 못했습니다.");
+                }
+                
+                // 오류 카운터 리셋 (성공)
+                this.errorCount = 0;
+            } catch (mpError) {
+                // 메모리 오류 또는 다른 MediaPipe 내부 오류 발생
+                console.error("MediaPipe 내부 처리 오류:", mpError);
+                
+                // 연속 오류 카운트 증가
+                this.errorCount++;
+                
+                // 연속 오류가 임계값을 초과하면 폴백 메서드로 전환
+                if (this.errorCount >= this.maxErrorsBeforeFallback) {
+                    console.warn(`연속 ${this.errorCount}회 오류 발생, 폴백 메서드로 전환`);
+                    this.useMediaPipe = false;
+                }
+                
+                return this._segmentPersonByColor(frame);
+            }
+            
+            // 여기서부터는 정상 처리된 경우
             // 결과 처리를 위한 캔버스 준비
             const personCanvas = document.createElement('canvas');
-            personCanvas.width = width;
-            personCanvas.height = height;
+            personCanvas.width = originalWidth;
+            personCanvas.height = originalHeight;
             const personCtx = personCanvas.getContext('2d');
             
             // 마스크 캔버스 준비
             const maskCanvas = document.createElement('canvas');
-            maskCanvas.width = width;
-            maskCanvas.height = height;
+            maskCanvas.width = originalWidth;
+            maskCanvas.height = originalHeight;
             const maskCtx = maskCanvas.getContext('2d');
             
-            // 세그멘테이션 마스크 그리기
-            maskCtx.drawImage(this.lastResults.segmentationMask, 0, 0, width, height);
+            // 세그멘테이션 마스크 그리기 (원본 이미지 크기에 맞게 조정)
+            maskCtx.drawImage(this.lastResults.segmentationMask, 0, 0, originalWidth, originalHeight);
             
             // 원본 이미지 그리기
-            personCtx.drawImage(frame, 0, 0, width, height);
+            personCtx.drawImage(frame, 0, 0, originalWidth, originalHeight);
             
             // 마스크를 사용하여 인물만 추출 (배경 제거)
             personCtx.globalCompositeOperation = 'destination-in';
-            personCtx.drawImage(maskCanvas, 0, 0, width, height);
+            personCtx.drawImage(maskCanvas, 0, 0, originalWidth, originalHeight);
             personCtx.globalCompositeOperation = 'source-over';
             
             // 에지 블러 효과 적용
@@ -209,6 +287,16 @@ class PersonSegmenter {
             };
         } catch (error) {
             console.error("MediaPipe Selfie Segmentation 처리 중 오류:", error);
+            
+            // 오류 카운터 증가
+            this.errorCount++;
+            
+            // 연속 오류가 임계값 초과시 MediaPipe 비활성화
+            if (this.errorCount >= this.maxErrorsBeforeFallback) {
+                console.warn(`연속 ${this.errorCount}회 오류 발생, MediaPipe 사용 중지`);
+                this.useMediaPipe = false;
+            }
+            
             console.warn("색상 기반 인물 분리로 폴백합니다.");
             return this._segmentPersonByColor(frame);
         }
