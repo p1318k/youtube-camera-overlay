@@ -148,16 +148,17 @@ class PersonSegmenter {
                     existingScript.remove();
                 }
                 
-                // 새 스크립트 생성 - IIFE 버전 사용 (모듈이 아닌 즉시 실행 함수 버전)
+                // 새 스크립트 생성
                 const script = document.createElement('script');
                 
-                // vision_bundle.js 대신 IIFE 버전 사용
-                script.src = `${this.mediapipeCDNURL}/vision_bundle_iife.js`;
+                // 올바른 CDN 경로 구조 사용
+                // IIFE 버전은 /wasm 하위 폴더에 있지 않고 루트에 있음
+                script.src = `${this.mediapipeCDNURL}/vision_bundle.js`; // .min.js가 아닌 일반 버전 먼저 시도
                 script.dataset.mediapipe = "vision-tasks";
-                script.crossOrigin = "anonymous";  // CORS 오류 방지
+                script.crossOrigin = "anonymous"; // CORS 오류 방지
                 
                 script.onload = () => {
-                    console.log(`MediaPipe 스크립트 로드 완료 (${this.mediapipeCDNURL})`);
+                    console.log(`MediaPipe 스크립트 로드 완료 (${script.src})`);
                     
                     // 잠시 대기 후 FilesetResolver 정의 확인
                     setTimeout(() => {
@@ -181,12 +182,20 @@ class PersonSegmenter {
                 };
                 
                 script.onerror = (error) => {
-                    console.error(`MediaPipe 스크립트 로드 실패 (${this.mediapipeCDNURL}):`, error);
+                    console.error(`MediaPipe 스크립트 로드 실패 (${script.src}):`, error);
                     
-                    // 파일명 백업 시도 (vision_bundle_iife.min.js)
-                    if (!script.src.includes('min.js')) {
-                        console.log("압축 버전(min.js)으로 다시 시도합니다.");
-                        script.src = `${this.mediapipeCDNURL}/vision_bundle_iife.min.js`;
+                    // 먼저 압축 버전(.min.js) 시도
+                    if (!script.src.includes('.min.js')) {
+                        console.log("압축 버전(.min.js)으로 다시 시도합니다.");
+                        script.src = `${this.mediapipeCDNURL}/vision_bundle.min.js`;
+                        document.head.appendChild(script);
+                        return;
+                    }
+                    
+                    // 다음으로 direct_bundle 시도
+                    if (!script.src.includes('direct')) {
+                        console.log("direct_bundle 버전으로 다시 시도합니다.");
+                        script.src = `${this.mediapipeCDNURL}/tasks-vision_direct_bundle.js`;
                         document.head.appendChild(script);
                         return;
                     }
