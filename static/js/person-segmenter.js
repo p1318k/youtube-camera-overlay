@@ -346,25 +346,9 @@ class PersonSegmenter {
         console.log("originalWidth:", originalWidth, "originalHeight:", originalHeight);
         
         try {
-            // 시간 측정 시작
-            const startTime = performance.now();
-            
-            // 타임아웃 설정
-            let timeoutId = setTimeout(() => {
-                console.error("MediaPipe 처리 시간 초과 (메모리 오류 의심)");
-                throw new Error("MediaPipe 처리 시간 초과 (메모리 오류 의심)");
-            }, 5000);
-            
             try {
                 // selfie_segmentation은 이미지를 직접 입력으로 받음
                 await this.selfieSegmentation.send({ image: frame });
-                
-                // 타임아웃 해제
-                clearTimeout(timeoutId);
-                
-                // 시간 측정 종료
-                const processingTime = performance.now() - startTime;
-                console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
                 
                 // 결과가 없으면 오류
                 if (!this.lastSegmentationMask) {
@@ -423,9 +407,6 @@ class PersonSegmenter {
                     personCanvas: blurredCanvas
                 };
             } catch (mpError) {
-                // 타임아웃 해제
-                clearTimeout(timeoutId);
-                
                 // 메모리 오류 또는 다른 MediaPipe 내부 오류 발생
                 console.error("MediaPipe 내부 처리 오류:", mpError);
                 
