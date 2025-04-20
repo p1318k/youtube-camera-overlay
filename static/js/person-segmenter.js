@@ -12,7 +12,7 @@ class PersonSegmenter {
             maskOpacity: 1.0,    // 마스크 불투명도
             maskBlur: 5,         // 마스크 블러 강도
             edgeBlur: 10,        // 에지 블러 강도
-            flipHorizontal: true, // 수평 뒤집기 (셀카 모드)
+            flipHorizontal: false, // 수평 뒤집기 (셀카 모드)
             maxImageSize: 1280    // 최대 이미지 크기 (메모리 오류 방지)
         };
         
@@ -30,6 +30,9 @@ class PersonSegmenter {
         this.maxTimestampErrors = 2;
         this.lastFrameTime = 0;
         this.resetRequired = false;
+        
+        // 결과 저장 변수
+        this.lastSegmentationMask = null; // segmentationMask를 별도로 저장하기 위한 변수 추가
         
         console.log("PersonSegmenter 생성됨");
     }
@@ -67,7 +70,7 @@ class PersonSegmenter {
                 
                 // 결과 콜백 설정 - 바로 처리하지 않고 결과만 저장
                 this.selfieSegmentation.onResults((results) => {
-                    this.lastResults = results;
+                    this.lastSegmentationMask = results.segmentationMask ? results.segmentationMask.cloneNode(true) : null; // segmentationMask를 하드 카피하여 저장
                 });
                 
                 // // 모델 옵션 설정
@@ -121,12 +124,6 @@ class PersonSegmenter {
                 window.Module.locateFile = (file) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
                 };
-
-                // 로딩 타임아웃 설정
-                const loadTimeout = setTimeout(() => {
-                    console.error("MediaPipe 로딩 타임아웃");
-                    reject(new Error("MediaPipe 로딩 시간 초과"));
-                }, 10000); // 10초 타임아웃
                 
                 // SelfieSegmentation 스크립트 동적 로드
                 // 메모리 사용량이 적은 가벼운 모델 버전 사용
@@ -140,7 +137,6 @@ class PersonSegmenter {
                 
                 // 스크립트 로드 이벤트 핸들러
                 script.onload = () => {
-                    clearTimeout(loadTimeout);
                     console.log("MediaPipe Selfie Segmentation 스크립트 로드 완료");
                     
                     // 다음 프레임에서 확인 (비동기 초기화 대기)
@@ -156,7 +152,6 @@ class PersonSegmenter {
                 };
                 
                 script.onerror = (error) => {
-                    clearTimeout(loadTimeout);
                     console.error("MediaPipe 스크립트 로드 실패, 대체 URL 시도:", error);
                     this._tryLoadAlternateScript(backupUrl, resolve, reject);
                 };
@@ -235,7 +230,6 @@ class PersonSegmenter {
         
         // 재초기화
         this.initialized = false;
-        this.lastResults = null;
         this.timestampErrorCount = 0;
         this.resetRequired = false;
         
@@ -373,7 +367,7 @@ class PersonSegmenter {
                 console.log(`MediaPipe 처리 시간: ${processingTime.toFixed(1)}ms`);
                 
                 // 결과가 없으면 오류
-                if (!this.lastResults || !this.lastResults.segmentationMask) {
+                if (!this.lastSegmentationMask) {
                     throw new Error("유효한 분할 결과를 받지 못했습니다.");
                 }
                 
@@ -409,7 +403,7 @@ class PersonSegmenter {
                 const maskCtx = maskCanvas.getContext('2d');
                 
                 // 세그멘테이션 마스크 그리기 (원본 이미지 크기에 맞게 조정)
-                maskCtx.drawImage(this.lastResults.segmentationMask, 0, 0, originalWidth, originalHeight);
+                maskCtx.drawImage(this.lastSegmentationMask, 0, 0, originalWidth, originalHeight);
                 
                 // 원본 이미지 그리기
                 personCtx.drawImage(frame, 0, 0, originalWidth, originalHeight);
